@@ -1,0 +1,246 @@
+<html>
+
+<head>
+<title>Voxel Rendering</title>
+<meta http-equiv="content-type" content="text/html; charset=ISO-8859-1">
+
+
+<script type="text/javascript" src="./math.js"></script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+    precision mediump float;
+	varying vec2 vTextureCoord;
+	uniform float iGlobalTime;
+	uniform vec3 iViewDir;
+	uniform vec3 iLookFrom;
+	uniform vec3 iDx;
+	uniform vec3 iDy;
+	uniform sampler2D uSampler;
+	
+	vec3 tex3d(vec3 pos)
+	{
+	  vec3 rta = vec3(0,0,0);
+	  if(length(pos)<25.0)
+		rta = vec3(1,1,1);
+		/*
+	  vec3 p = floor(mod(pos,vec3(7,11,1)));
+	  if(p.x + p.y + p.z <0.1)
+		rta = vec3(1,1,1);
+		*/
+		return rta;
+		
+	}
+
+    void main(void) {
+		vec2 uv = vTextureCoord;
+		
+		/*
+		// computo la direccion del rayo
+		// D = N + Dy*y + Dx*x;
+		vec3 rd = normalize(iViewDir + iDy*(uv.y-0.5) + iDx*(uv.x-0.5));
+		vec3 ro = iLookFrom;
+		vec3 S = vec3(0,0,0);
+		float k = 1.0;
+		for (int i = 0; i < 100; i++) {
+			S += tex3d(ro)*k;
+			k*=0.95;
+			ro += rd;
+		}
+		
+		gl_FragColor = vec4( S, 1.0 );
+		*/
+		
+		gl_FragColor = texture2D(uSampler, uv);		
+		//gl_FragColor = vec4(vTextureCoord.s, vTextureCoord.t,0,1);		
+	
+    }
+</script>
+
+<script id="shader-vs" type="x-shader/x-vertex">
+    attribute vec3 aVertexPosition;
+	varying vec2 vTextureCoord;
+    void main(void) {
+        gl_Position = vec4(aVertexPosition, 1.0);
+		vTextureCoord = vec2(aVertexPosition.x/2.0 + 0.5 , aVertexPosition.y/2.0 + 0.5);
+    }
+</script>
+
+
+<script type="text/javascript">
+    var gl;
+	var time = 0;
+	var time_loc;
+	var LookFrom_loc;
+	var ViewDir_loc;
+	var Dx_loc;
+	var Dy_loc;
+	
+	var DX = 1200.0;
+	var DY = 700.0;
+	var fov = Math.PI / 4.0;
+	var LookFrom = {x:0, y:6, z:-22} ;
+	var LookAt = {x:0, y:0, z:0};
+	var VUp = {x:0, y:1, z:0};
+	
+	
+    function initGL(canvas) {
+        try {
+            gl = canvas.getContext("experimental-webgl");
+            gl.viewportWidth = canvas.width;
+            gl.viewportHeight = canvas.height;
+        } catch (e) {
+        }
+        if (!gl) {
+            alert("Could not initialise WebGL, sorry :-(");
+        }
+    }
+    function getShader(gl, id) {
+        var shaderScript = document.getElementById(id);
+        if (!shaderScript) {
+            return null;
+        }
+        var str = "";
+        var k = shaderScript.firstChild;
+        while (k) {
+            if (k.nodeType == 3) {
+                str += k.textContent;
+            }
+            k = k.nextSibling;
+        }
+        var shader;
+        if (shaderScript.type == "x-shader/x-fragment") {
+            shader = gl.createShader(gl.FRAGMENT_SHADER);
+        } else if (shaderScript.type == "x-shader/x-vertex") {
+            shader = gl.createShader(gl.VERTEX_SHADER);
+        } else {
+            return null;
+        }
+        gl.shaderSource(shader, str);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            alert(gl.getShaderInfoLog(shader));
+            return null;
+        }
+        return shader;
+    }
+    var shaderProgram;
+    function initShaders() {
+        var fragmentShader = getShader(gl, "shader-fs");
+        var vertexShader = getShader(gl, "shader-vs");
+        shaderProgram = gl.createProgram();
+        gl.attachShader(shaderProgram, vertexShader);
+        gl.attachShader(shaderProgram, fragmentShader);
+        gl.linkProgram(shaderProgram);
+        if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+            alert("Could not initialise shaders");
+        }
+        gl.useProgram(shaderProgram);
+        shaderProgram.vertexPositionAttribute = gl.getAttribLocation(shaderProgram, "aVertexPosition");
+        gl.enableVertexAttribArray(shaderProgram.vertexPositionAttribute);
+		time_loc = gl.getUniformLocation(shaderProgram, "iGlobalTime");			
+		ViewDir_loc = gl.getUniformLocation(shaderProgram, "iViewDir");
+		LookFrom_loc = gl.getUniformLocation(shaderProgram, "iLookFrom");	
+		Dx_loc = gl.getUniformLocation(shaderProgram, "iDx");
+		Dy_loc = gl.getUniformLocation(shaderProgram, "iDy");
+		
+    }
+    
+	var fullScreenQuad;
+    function initBuffers() {
+        fullScreenQuad = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, fullScreenQuad);
+        vertices = [
+             1.0,  1.0,  0.0, 
+            -1.0,  1.0,  0.0, 
+             1.0, -1.0,  0.0, 
+            -1.0, -1.0,  0.0, 
+        ];
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.STATIC_DRAW);
+        fullScreenQuad.itemSize = 3;
+        fullScreenQuad.numItems = 4;
+    }
+	
+	
+	function textureFromPixelArray(gl, dataArray, width, height) {
+	var dataTypedArray = new Uint8Array(dataArray);		
+    var tx = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tx);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGB, width, height, 0, gl.RGB, gl.UNSIGNED_BYTE, dataTypedArray);
+	gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);	
+    return tx;
+
+	}	
+	
+	var texture;
+	function initTexture() {
+	
+		var data = [];
+		var t = 0;
+		var max_size = 4096;
+		for(var i = 0;i<max_size;++i)
+		for(var j = 0;j<max_size;++j)
+		{
+			data[t++] = i;
+			data[t++] = j;
+			data[t++] = 0;
+		}
+
+		texture = textureFromPixelArray(gl,data,max_size,max_size);
+	}	
+	
+    function drawScene() {
+		time+=0.1;
+		LookFrom.x = LookAt.x + 100*Math.cos(time*0.1);
+		LookFrom.z = LookAt.z + 100*Math.sin(time*0.1);
+        gl.viewport(0, 0, gl.viewportWidth, gl.viewportHeight);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        gl.bindBuffer(gl.ARRAY_BUFFER, fullScreenQuad);
+        gl.vertexAttribPointer(shaderProgram.vertexPositionAttribute, fullScreenQuad.itemSize, gl.FLOAT, false, 0, 0);
+		gl.uniform1f (time_loc, time);  
+
+		// Camara
+		var N = substract(LookAt , LookFrom);
+		normalize(N);
+		var V = cross(N,VUp);
+		normalize(V);
+		var U = cross(V,N);
+		var k = 2*Math.tan(fov/2);
+		var Dy = mul(U, (k*DY/DX));
+		var Dx = mul(V , k);
+		// direccion de cada rayo
+		// D = N + Dy*y + Dx*x;
+		
+		gl.uniform3f (ViewDir_loc, N.x,N.y,N.z);  
+		gl.uniform3f (LookFrom_loc, LookFrom.x , LookFrom.y , LookFrom.z);  
+		gl.uniform3f (Dx_loc, Dx.x,Dx.y,Dx.z);  
+		gl.uniform3f (Dy_loc, Dy.x, Dy.y,Dy.z);  
+		
+		// textura
+		gl.activeTexture(gl.TEXTURE0);
+		gl.bindTexture(gl.TEXTURE_2D, texture);
+		gl.uniform1i(shaderProgram.samplerUniform, 0);		
+		
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, fullScreenQuad.numItems);
+    }
+    function webGLStart() {
+        var canvas = document.getElementById("my_canvas");
+        initGL(canvas);
+        initShaders();
+        initBuffers();
+       initTexture();
+	   gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.enable(gl.DEPTH_TEST);
+		setInterval(drawScene, 100);
+    }
+</script>
+
+
+</head>
+
+
+<body onload="webGLStart();">
+    <canvas id="my_canvas" style="border: none;" width="1200" height="700"></canvas>
+</body>
+
+</html>
